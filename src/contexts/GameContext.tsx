@@ -1,5 +1,7 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { toast } from "@/lib/toast-helpers";
+import { socketService } from '@/services/socket';
 
 // Game roles types
 export type RoleType = 'Raja' | 'Mantri' | 'Chor' | 'Sipahi';
@@ -22,8 +24,9 @@ interface GameContextType {
   gameStarted: boolean;
   gameEnded: boolean;
   playerName: string;
+  gameId: string | null;
   setPlayerName: (name: string) => void;
-  joinGame: (name: string) => void;
+  joinGame: (name: string, gameId?: string) => void;
   startGame: () => void;
   distributeRoles: () => void;
   makeGuess: (targetPlayerId: string) => void;
@@ -58,15 +61,83 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [gameEnded, setGameEnded] = useState(false);
   const [playerName, setPlayerName] = useState('');
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
+  const [gameId, setGameId] = useState<string | null>(null);
+
+  // Initialize socket connection
+  useEffect(() => {
+    const socket = socketService.connect();
+    
+    if (!socket) return;
+    
+    // Listen for game state updates
+    socket.on('game_state', (data) => {
+      setPlayers(data.players);
+      setCurrentRound(data.currentRound);
+      setGameStarted(data.gameStarted);
+      setGameEnded(data.gameEnded);
+      
+      // Update current player
+      const newCurrentPlayer = data.players.find((p: Player) => p.name === playerName);
+      if (newCurrentPlayer) {
+        setCurrentPlayer(newCurrentPlayer);
+      }
+      
+      // Set game ID if it's available
+      if (data.gameId && !gameId) {
+        setGameId(data.gameId);
+      }
+    });
+    
+    socket.on('player_joined', (data) => {
+      toast.success(`${data.playerName} joined the game`);
+    });
+    
+    socket.on('game_started', () => {
+      toast.success("Game started! Roles have been distributed.");
+    });
+    
+    socket.on('guess_result', (data) => {
+      if (data.correct) {
+        toast.success(`Correct! ${data.sipahiName} identified ${data.chorName} as the Chor!`);
+      } else {
+        toast.error(`Wrong guess! ${data.chorName} was the Chor and gets the Sipahi's points!`);
+      }
+    });
+    
+    socket.on('round_ended', (data) => {
+      toast.success(`Round ${data.round} has ended.`);
+    });
+    
+    socket.on('game_ended', (data) => {
+      toast.success(`Game over! ${data.winner.name} wins with ${data.winner.score} points!`);
+    });
+    
+    socket.on('error', (data) => {
+      toast.error(data.message);
+    });
+    
+    return () => {
+      socketService.disconnect();
+    };
+  }, [playerName]);
 
   // Join game function
-  const joinGame = (name: string) => {
-    const mockPlayers = generateMockPlayers();
-    mockPlayers[0].name = name;
-    setPlayers(mockPlayers);
-    setCurrentPlayer(mockPlayers[0]);
+  const joinGame = (name: string, gameIdToJoin?: string) => {
     setPlayerName(name);
-    toast.success(`Welcome to the game, ${name}!`);
+    
+    if (gameIdToJoin) {
+      // Join an existing game
+      socketService.joinGame(gameIdToJoin, name);
+      setGameId(gameIdToJoin);
+    } else {
+      // Create a new game
+      socketService.createGame(name);
+      const mockPlayers = generateMockPlayers();
+      mockPlayers[0].name = name;
+      setPlayers(mockPlayers);
+      setCurrentPlayer(mockPlayers[0]);
+      toast.success(`Welcome to the game, ${name}!`);
+    }
   };
 
   // Start game function
@@ -76,107 +147,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     
-    setGameStarted(true);
-    distributeRoles();
-    toast.success("Game started! Roles have been distributed.");
+    socketService.startGame();
   };
 
-  // Distribute roles among players
+  // Distribute roles among players (now handled by server)
   const distributeRoles = () => {
-    const roles: RoleType[] = ['Raja', 'Mantri', 'Chor', 'Sipahi'];
-    const shuffledRoles = [...roles].sort(() => Math.random() - 0.5);
-    
-    const updatedPlayers = players.map((player, index) => ({
-      ...player,
-      currentRole: shuffledRoles[index],
-      isRevealed: shuffledRoles[index] === 'Raja' || shuffledRoles[index] === 'Sipahi'
-    }));
-    
-    setPlayers(updatedPlayers);
-    
-    // Update current player with their role
-    if (currentPlayer) {
-      const playerWithRole = updatedPlayers.find(p => p.id === currentPlayer.id);
-      setCurrentPlayer(playerWithRole || null);
-    }
+    // This is now handled by the server
+    // Kept for compatibility with existing code
   };
 
   // Make a guess (Sipahi guessing who is Chor)
   const makeGuess = (targetPlayerId: string) => {
-    const targetPlayer = players.find(p => p.id === targetPlayerId);
-    const rajaPlayer = players.find(p => p.currentRole === 'Raja');
-    const mantriPlayer = players.find(p => p.currentRole === 'Mantri');
-    const chorPlayer = players.find(p => p.currentRole === 'Chor');
-    const sipahiPlayer = players.find(p => p.currentRole === 'Sipahi');
-    
-    if (!targetPlayer || !rajaPlayer || !mantriPlayer || !chorPlayer || !sipahiPlayer) {
-      toast.error("Error in game state. Missing players or roles.");
-      return;
-    }
-    
-    // Check if the guess is correct
-    const isCorrectGuess = targetPlayer.currentRole === 'Chor';
-    
-    // Calculate points based on the rules
-    const updatedPlayers = players.map(player => {
-      const newPlayer = { ...player };
-      
-      if (player.currentRole === 'Raja') {
-        newPlayer.score += rolePoints.Raja;
-      } else if (player.currentRole === 'Mantri') {
-        newPlayer.score += rolePoints.Mantri;
-      } else if (player.currentRole === 'Sipahi') {
-        newPlayer.score += isCorrectGuess ? rolePoints.Sipahi : 0;
-      } else if (player.currentRole === 'Chor') {
-        newPlayer.score += isCorrectGuess ? 0 : rolePoints.Sipahi;
-      }
-      
-      // Reveal all roles for this round
-      newPlayer.isRevealed = true;
-      
-      return newPlayer;
-    });
-    
-    setPlayers(updatedPlayers);
-    
-    // Update current player
-    if (currentPlayer) {
-      const updatedCurrentPlayer = updatedPlayers.find(p => p.id === currentPlayer.id);
-      setCurrentPlayer(updatedCurrentPlayer || null);
-    }
-    
-    if (isCorrectGuess) {
-      toast.success(`Correct! ${sipahiPlayer.name} correctly identified ${chorPlayer.name} as the Chor!`);
-    } else {
-      toast.error(`Wrong guess! ${chorPlayer.name} was the Chor and gets the Sipahi's points!`);
-    }
-    
-    // Check if game should advance to next round
-    setTimeout(() => {
-      if (currentRound < totalRounds) {
-        setCurrentRound(prev => prev + 1);
-        
-        // Reset player roles and revealed status for next round
-        const resetPlayers = updatedPlayers.map(player => ({
-          ...player,
-          currentRole: undefined,
-          isRevealed: false
-        }));
-        
-        setPlayers(resetPlayers);
-        
-        // Distribute roles for next round
-        setTimeout(() => {
-          distributeRoles();
-          toast.success(`Round ${currentRound + 1} begins!`);
-        }, 1000);
-      } else {
-        // End game
-        setGameEnded(true);
-        const winner = [...updatedPlayers].sort((a, b) => b.score - a.score)[0];
-        toast.success(`Game over! ${winner.name} wins with ${winner.score} points!`);
-      }
-    }, 3000);
+    socketService.makeGuess(targetPlayerId);
   };
 
   // Reset game
@@ -185,6 +167,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentRound(1);
     setGameStarted(false);
     setGameEnded(false);
+    setGameId(null);
     toast.success("Game has been reset.");
   };
 
@@ -198,6 +181,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         gameStarted,
         gameEnded,
         playerName,
+        gameId,
         setPlayerName,
         joinGame,
         startGame,

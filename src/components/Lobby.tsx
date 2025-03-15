@@ -1,22 +1,47 @@
+
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useGame } from '@/contexts/GameContext';
 import { cn } from '@/lib/utils';
-import { User, UserPlus, PlayCircle, Users } from 'lucide-react';
+import { User, UserPlus, PlayCircle, Users, Link2 } from 'lucide-react';
 import { toast } from '@/lib/toast-helpers';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const Lobby: React.FC = () => {
-  const { players, joinGame, startGame, playerName, setPlayerName } = useGame();
+  const { players, joinGame, startGame, playerName, gameId, setPlayerName } = useGame();
   const [name, setName] = useState('');
+  const [gameIdToJoin, setGameIdToJoin] = useState('');
 
-  const handleJoin = (e: React.FormEvent) => {
+  const handleCreateGame = (e: React.FormEvent) => {
     e.preventDefault();
     if (name.trim() === '') {
       toast.error('Please enter a name');
       return;
     }
     joinGame(name);
+  };
+
+  const handleJoinGame = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (name.trim() === '') {
+      toast.error('Please enter a name');
+      return;
+    }
+    if (gameIdToJoin.trim() === '') {
+      toast.error('Please enter a game ID');
+      return;
+    }
+    joinGame(name, gameIdToJoin);
+  };
+
+  const copyGameLink = () => {
+    if (!gameId) return;
+    
+    const url = `${window.location.origin}/game?id=${gameId}`;
+    navigator.clipboard.writeText(url)
+      .then(() => toast.success('Game link copied to clipboard!'))
+      .catch(() => toast.error('Failed to copy game link'));
   };
 
   if (playerName) {
@@ -28,15 +53,34 @@ const Lobby: React.FC = () => {
               <Users className="h-5 w-5 text-primary" />
               <h2 className="text-2xl font-semibold">Game Lobby</h2>
             </div>
-            <Button 
-              onClick={startGame} 
-              disabled={players.length < 4}
-              className="rounded-full"
-            >
-              <PlayCircle className="mr-2 h-4 w-4" />
-              Start Game
-            </Button>
+            <div className="flex items-center gap-2">
+              {gameId && (
+                <Button 
+                  variant="outline" 
+                  className="flex items-center text-xs gap-1 mr-2"
+                  onClick={copyGameLink}
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  Share Game
+                </Button>
+              )}
+              <Button 
+                onClick={startGame} 
+                disabled={players.length < 4}
+                className="rounded-full"
+              >
+                <PlayCircle className="mr-2 h-4 w-4" />
+                Start Game
+              </Button>
+            </div>
           </div>
+          
+          {gameId && (
+            <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+              <p className="text-xs text-muted-foreground">Game ID: <span className="font-mono font-medium">{gameId}</span></p>
+              <p className="text-xs text-muted-foreground mt-1">Share this ID with friends so they can join your game</p>
+            </div>
+          )}
           
           <div className="mb-4">
             <h3 className="text-sm text-muted-foreground mb-2">Players</h3>
@@ -80,30 +124,69 @@ const Lobby: React.FC = () => {
           <UserPlus className="h-10 w-10 text-primary mx-auto mb-3" />
           <h2 className="text-2xl font-semibold">Join Game</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Enter your name to join the game
+            Create a new game or join an existing one
           </p>
         </div>
         
-        <form onSubmit={handleJoin}>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Input
-                type="text"
-                placeholder="Your name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="rounded-xl"
-              />
-            </div>
-            <Button 
-              type="submit" 
-              className="w-full rounded-xl"
-              disabled={name.trim() === ''}
-            >
-              Join Game
-            </Button>
-          </div>
-        </form>
+        <Tabs defaultValue="create">
+          <TabsList className="grid grid-cols-2 mb-4">
+            <TabsTrigger value="create">Create Game</TabsTrigger>
+            <TabsTrigger value="join">Join Game</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="create">
+            <form onSubmit={handleCreateGame}>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Input
+                    type="text"
+                    placeholder="Your name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="rounded-xl"
+                  />
+                </div>
+                <Button 
+                  type="submit" 
+                  className="w-full rounded-xl"
+                  disabled={name.trim() === ''}
+                >
+                  Create New Game
+                </Button>
+              </div>
+            </form>
+          </TabsContent>
+          
+          <TabsContent value="join">
+            <form onSubmit={handleJoinGame}>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Input
+                    type="text"
+                    placeholder="Your name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="rounded-xl mb-2"
+                  />
+                  <Input
+                    type="text"
+                    placeholder="Game ID"
+                    value={gameIdToJoin}
+                    onChange={(e) => setGameIdToJoin(e.target.value)}
+                    className="rounded-xl"
+                  />
+                </div>
+                <Button 
+                  type="submit" 
+                  className="w-full rounded-xl"
+                  disabled={name.trim() === '' || gameIdToJoin.trim() === ''}
+                >
+                  Join Existing Game
+                </Button>
+              </div>
+            </form>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
