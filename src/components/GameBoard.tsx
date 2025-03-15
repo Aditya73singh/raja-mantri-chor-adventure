@@ -1,9 +1,10 @@
+
 import React, { useState } from 'react';
 import { useGame, Player, RoleType } from '@/contexts/GameContext';
 import GameCard from './GameCard';
 import PlayerScore from './PlayerScore';
 import { Button } from '@/components/ui/button';
-import { toast } from '@/components/ui/sonner';
+import { toast } from "@/hooks/use-toast";
 import { Search, Check, Crown } from 'lucide-react';
 
 const GameBoard: React.FC = () => {

@@ -1,11 +1,10 @@
-
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useGame } from '@/contexts/GameContext';
 import { cn } from '@/lib/utils';
 import { User, UserPlus, PlayCircle, Users } from 'lucide-react';
-import { toast } from '@/components/ui/sonner';
+import { toast } from '@/hooks/use-toast';
 
 const Lobby: React.FC = () => {
   const { players, joinGame, startGame, playerName, setPlayerName } = useGame();
