@@ -8,25 +8,37 @@ import { useGame } from '@/contexts/GameContext';
 import { socketService } from '@/services/socket';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, WifiOff } from 'lucide-react';
 
 const Game: React.FC = () => {
   const { gameStarted, joinGame, playerName } = useGame();
   const [searchParams] = useSearchParams();
   const [connectionError, setConnectionError] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   
   // Function to check connection and update state
   const checkConnection = () => {
     const isConnected = socketService.isConnected();
     setConnectionError(!isConnected);
+    if (isConnected && reconnecting) {
+      setReconnecting(false);
+    }
     return isConnected;
   };
   
   // Handle manual reconnection
   const handleReconnect = () => {
+    setReconnecting(true);
     if (socketService.reconnect()) {
       // Give a moment for the connection to establish
-      setTimeout(checkConnection, 1000);
+      setTimeout(() => {
+        const connected = checkConnection();
+        if (!connected) {
+          setReconnecting(false);
+        }
+      }, 3000);
+    } else {
+      setReconnecting(false);
     }
   };
   
@@ -61,18 +73,24 @@ const Game: React.FC = () => {
       {connectionError && (
         <div className="max-w-md mx-auto mt-4 mb-4">
           <Alert variant="destructive" className="bg-red-100">
+            <WifiOff className="h-5 w-5 mb-2" />
             <AlertTitle>Connection Error</AlertTitle>
             <AlertDescription>
               There was a problem connecting to the game server. This might be due to server maintenance or network issues.
+              <br />
+              <span className="text-xs text-gray-600 mt-1 block">
+                Note: The server is hosted on a free tier which may take a moment to wake up if it has been inactive.
+              </span>
             </AlertDescription>
             <div className="mt-3">
               <Button 
                 variant="outline" 
                 onClick={handleReconnect}
+                disabled={reconnecting}
                 className="bg-white hover:bg-gray-100"
               >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Reconnect
+                <RefreshCw className={`mr-2 h-4 w-4 ${reconnecting ? 'animate-spin' : ''}`} />
+                {reconnecting ? 'Reconnecting...' : 'Reconnect'}
               </Button>
             </div>
           </Alert>
