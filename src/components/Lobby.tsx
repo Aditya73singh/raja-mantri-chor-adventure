@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { useGame } from '@/contexts/GameContext';
 import { cn } from '@/lib/utils';
 import { User, UserPlus, PlayCircle, Users } from 'lucide-react';
-import { toast } from '@/hooks/use-toast';
+import { toast } from '@/lib/toast-helpers';
 
 const Lobby: React.FC = () => {
   const { players, joinGame, startGame, playerName, setPlayerName } = useGame();
