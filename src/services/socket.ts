@@ -10,10 +10,22 @@ class SocketService {
   private maxReconnectAttempts: number = 5;
   private reconnectInterval: number = 3000; // 3 seconds
   private serverUrl: string = 'https://raja-mantri-server.onrender.com';
+  private connectionInProgress: boolean = false;
 
   // Initialize connection to WebSocket server
   connect() {
-    if (this.socket && this.socket.connected) return this.socket;
+    // Prevent multiple simultaneous connection attempts
+    if (this.connectionInProgress) {
+      console.log("Connection attempt already in progress");
+      return this.socket;
+    }
+
+    this.connectionInProgress = true;
+
+    if (this.socket && this.socket.connected) {
+      this.connectionInProgress = false;
+      return this.socket;
+    }
 
     // Clean up existing socket if it exists but is not connected
     if (this.socket) {
@@ -22,20 +34,37 @@ class SocketService {
       this.socket = null;
     }
 
-    // Connect to the WebSocket server with fallback to HTTP polling
-    this.socket = io(this.serverUrl, {
-      transports: ['websocket', 'polling'], // Try WebSocket first, then fall back to polling
-      autoConnect: true,
-      reconnection: true,
-      reconnectionAttempts: this.maxReconnectAttempts,
-      reconnectionDelay: this.reconnectInterval,
-      timeout: 20000, // 20 seconds timeout (increased from 10s)
-      forceNew: true, // Create a new connection each time
-    });
+    console.log("Connecting to socket server:", this.serverUrl);
 
-    // Setup event listeners
+    // Connect to the WebSocket server with fallback to HTTP polling
+    try {
+      this.socket = io(this.serverUrl, {
+        transports: ['polling', 'websocket'], // Try polling first, then websocket
+        autoConnect: true,
+        reconnection: true,
+        reconnectionAttempts: this.maxReconnectAttempts,
+        reconnectionDelay: this.reconnectInterval,
+        timeout: 30000, // 30 seconds timeout (increased from 20s)
+        forceNew: true, // Create a new connection each time
+      });
+
+      // Setup event listeners
+      this.setupEventListeners();
+    } catch (error) {
+      console.error("Error creating socket connection:", error);
+      this.connectionInProgress = false;
+      return null;
+    }
+
+    return this.socket;
+  }
+
+  private setupEventListeners() {
+    if (!this.socket) return;
+
     this.socket.on('connect', () => {
       this.reconnectAttempts = 0;
+      this.connectionInProgress = false;
       toast.success('Connected to game server');
       console.log('Socket connected:', this.socket?.id);
       
@@ -52,24 +81,34 @@ class SocketService {
       this.reconnectAttempts++;
       console.error('Socket connection error:', error);
       
-      if (this.reconnectAttempts <= this.maxReconnectAttempts) {
-        toast.error(`Connection error: ${error.message}. Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-      } else {
-        toast.error(`Connection failed after ${this.maxReconnectAttempts} attempts. Please check your internet connection and try again.`);
+      // Only show toast for first error to avoid spam
+      if (this.reconnectAttempts === 1) {
+        toast.error(`Connection error: ${error.message}. Attempting to reconnect...`);
+      }
+      
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        this.connectionInProgress = false;
+        // Try again with different transport
+        if (this.socket?.io.opts.transports?.includes('websocket')) {
+          console.log("Switching to polling transport after failed websocket attempts");
+          this.switchToPolling();
+        }
       }
     });
 
     this.socket.on('reconnect', (attemptNumber) => {
       toast.success(`Reconnected to server after ${attemptNumber} attempts`);
+      this.connectionInProgress = false;
     });
 
     this.socket.on('reconnect_error', (error) => {
       console.error('Socket reconnection error:', error);
-      toast.error(`Reconnection error: ${error.message}`);
+      this.connectionInProgress = false;
     });
 
     this.socket.on('reconnect_failed', () => {
       toast.error(`Failed to reconnect after ${this.maxReconnectAttempts} attempts. Please reload the page.`);
+      this.connectionInProgress = false;
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -83,16 +122,24 @@ class SocketService {
       } else {
         toast.error(`Disconnected: ${reason}. Attempting to reconnect...`);
       }
+      this.connectionInProgress = false;
     });
 
-    return this.socket;
+    this.socket.on('error', (error) => {
+      console.error('Socket error:', error);
+      this.connectionInProgress = false;
+    });
   }
 
   // Switch to polling transport if websocket fails
   private switchToPolling() {
     if (this.socket) {
       console.log("Switching to polling transport");
+      // Disconnect first
+      this.socket.disconnect();
+      // Change transport preference
       this.socket.io.opts.transports = ['polling'];
+      // Try to reconnect
       this.socket.connect();
     }
   }
@@ -118,7 +165,12 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
     }
-    // Try connection with both transports
+    
+    // Reset connection state
+    this.reconnectAttempts = 0;
+    this.connectionInProgress = false;
+    
+    // Try connection with polling first
     console.log("Attempting manual reconnection");
     return this.connect() !== null;
   }

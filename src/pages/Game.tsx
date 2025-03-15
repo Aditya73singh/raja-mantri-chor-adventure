@@ -15,6 +15,7 @@ const Game: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [connectionError, setConnectionError] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [connectionAttempts, setConnectionAttempts] = useState(0);
   
   // Function to check connection and update state
   const checkConnection = () => {
@@ -29,6 +30,8 @@ const Game: React.FC = () => {
   // Handle manual reconnection
   const handleReconnect = () => {
     setReconnecting(true);
+    setConnectionAttempts(prev => prev + 1);
+    
     if (socketService.reconnect()) {
       // Give a moment for the connection to establish
       setTimeout(() => {
@@ -36,7 +39,7 @@ const Game: React.FC = () => {
         if (!connected) {
           setReconnecting(false);
         }
-      }, 3000);
+      }, 5000);
     } else {
       setReconnecting(false);
     }
@@ -61,6 +64,11 @@ const Game: React.FC = () => {
     // Set up connection checking interval
     const interval = setInterval(checkConnection, 5000);
     
+    // Initial connection attempt
+    if (!socketService.isConnected()) {
+      handleReconnect();
+    }
+    
     return () => {
       clearInterval(interval);
     };
@@ -80,6 +88,7 @@ const Game: React.FC = () => {
               <br />
               <span className="text-xs text-gray-600 mt-1 block">
                 Note: The server is hosted on a free tier which may take a moment to wake up if it has been inactive.
+                {connectionAttempts > 0 && ` (${connectionAttempts} reconnection attempts made)`}
               </span>
             </AlertDescription>
             <div className="mt-3">
