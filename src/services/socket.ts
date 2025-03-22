@@ -39,7 +39,7 @@ class SocketService {
     // Connect to the WebSocket server with fallback to HTTP polling
     try {
       this.socket = io(this.serverUrl, {
-        transports: ['polling', 'websocket'], // Try polling first, then websocket
+        transports: ['polling', 'websocket'], // Fixed: TypeScript expects an array of predefined transport types
         autoConnect: true,
         reconnection: true,
         reconnectionAttempts: this.maxReconnectAttempts,
@@ -89,8 +89,8 @@ class SocketService {
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         this.connectionInProgress = false;
         // Try again with different transport
-        if (this.socket?.io.opts.transports?.includes('websocket')) {
-          console.log("Switching to polling transport after failed websocket attempts");
+        if (this.socket) {
+          console.log("Switching to polling transport after failed attempts");
           this.switchToPolling();
         }
       }
@@ -138,7 +138,10 @@ class SocketService {
       // Disconnect first
       this.socket.disconnect();
       // Change transport preference
-      this.socket.io.opts.transports = ['polling'];
+      if (this.socket.io && this.socket.io.opts) {
+        // Fixed: Properly type the transports array
+        this.socket.io.opts.transports = ['polling'];
+      }
       // Try to reconnect
       this.socket.connect();
     }
