@@ -31,6 +31,7 @@ interface GameContextType {
   distributeRoles: () => void;
   makeGuess: (targetPlayerId: string) => void;
   resetGame: () => void;
+  reconnectToGame: () => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -63,6 +64,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
   const [gameId, setGameId] = useState<string | null>(null);
   const [socketInitialized, setSocketInitialized] = useState(false);
+  const [connectionRetries, setConnectionRetries] = useState(0);
+
+  // Initialize player name from localStorage
+  useEffect(() => {
+    const savedName = localStorage.getItem('playerName');
+    if (savedName) {
+      setPlayerName(savedName);
+    }
+    
+    // Check for saved game ID
+    const savedGameId = localStorage.getItem('gameId');
+    if (savedGameId) {
+      setGameId(savedGameId);
+    }
+  }, []);
 
   // Initialize socket connection
   useEffect(() => {
@@ -72,15 +88,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const socket = socketService.connect();
     
     if (!socket) {
-      // If initial connection fails, schedule retry
+      // If initial connection fails, schedule retry with exponential backoff
+      const retryDelay = Math.min(1000 * (2 ** connectionRetries), 10000);
       const retryTimer = setTimeout(() => {
+        setConnectionRetries(prev => prev + 1);
         socketService.reconnect();
-      }, 3000);
+      }, retryDelay);
       
       return () => clearTimeout(retryTimer);
     }
     
     setSocketInitialized(true);
+    setConnectionRetries(0);
     
     // Listen for game state updates
     socket.on('game_state', (data) => {
@@ -98,6 +117,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Set game ID if it's available
       if (data.gameId && !gameId) {
         setGameId(data.gameId);
+        localStorage.setItem('gameId', data.gameId);
       }
     });
     
@@ -135,7 +155,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         socketService.disconnect();
       }
     };
-  }, [socketInitialized, playerName, gameId]);
+  }, [socketInitialized, playerName, gameId, connectionRetries]);
+
+  // Reconnect to game if we have the necessary information
+  const reconnectToGame = () => {
+    if (gameId && playerName) {
+      socketService.joinGame(gameId, playerName);
+      return true;
+    }
+    return false;
+  };
 
   // Join game function
   const joinGame = (name: string, gameIdToJoin?: string) => {
@@ -147,6 +176,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const joined = socketService.joinGame(gameIdToJoin, name);
       if (joined) {
         setGameId(gameIdToJoin);
+        localStorage.setItem('gameId', gameIdToJoin);
       }
     } else {
       // Create a new game
@@ -189,6 +219,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setGameStarted(false);
     setGameEnded(false);
     setGameId(null);
+    localStorage.removeItem('gameId');
     toast.success("Game has been reset.");
   };
 
@@ -208,7 +239,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         startGame,
         distributeRoles,
         makeGuess,
-        resetGame
+        resetGame,
+        reconnectToGame
       }}
     >
       {children}

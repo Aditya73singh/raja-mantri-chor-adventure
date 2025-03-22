@@ -7,14 +7,19 @@ class SocketService {
   private socket: Socket | null = null;
   private gameId: string | null = null;
   private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 5;
-  private reconnectInterval: number = 3000; // 3 seconds
-  // Fallback server URL when main server is down or slow to respond
-  private backupServerUrl: string = 'https://raja-mantri-backup.onrender.com';
-  private primaryServerUrl: string = 'https://raja-mantri-server.onrender.com';
-  private currentServerUrl: string = this.primaryServerUrl;
+  private maxReconnectAttempts: number = 10; // Increased max attempts
+  private reconnectInterval: number = 5000; // Increased to 5 seconds
+  // Fallback server options - expanded with additional options
+  private serverUrls: string[] = [
+    'https://raja-mantri-server.onrender.com',
+    'https://raja-mantri-backup.onrender.com',
+    'https://raja-mantri-chor.onrender.com',  // Additional fallback
+    'https://raja-mantri-game.herokuapp.com'  // Additional fallback
+  ];
+  private currentServerIndex: number = 0;
   private connectionInProgress: boolean = false;
   private connectionTimeout: NodeJS.Timeout | null = null;
+  private localFallbackMode: boolean = false;
 
   // Initialize connection to WebSocket server
   connect() {
@@ -38,21 +43,22 @@ class SocketService {
       this.socket = null;
     }
 
-    console.log("Connecting to socket server:", this.currentServerUrl);
+    const currentServerUrl = this.serverUrls[this.currentServerIndex];
+    console.log(`Connecting to socket server (${this.currentServerIndex + 1}/${this.serverUrls.length}):`, currentServerUrl);
 
     try {
       // Set a timeout to detect stalled connection attempts
       this.connectionTimeout = setTimeout(() => {
-        console.log("Connection attempt timed out, trying alternative method");
+        console.log("Connection attempt timed out, trying next server");
         this.handleConnectionTimeout();
-      }, 10000);
+      }, 15000); // Increased to 15 seconds for free tier servers that might be slow to wake
 
       // Use polling only initially to ensure most reliable connection
-      this.socket = io(this.currentServerUrl, {
+      this.socket = io(currentServerUrl, {
         transports: ['polling'], // Start with polling only for reliability
         autoConnect: true,
         reconnection: true,
-        reconnectionAttempts: this.maxReconnectAttempts,
+        reconnectionAttempts: 3, // Lower individual reconnection attempts per server
         reconnectionDelay: this.reconnectInterval,
         timeout: 60000, // 60 seconds timeout
         forceNew: true, // Create a new connection each time
@@ -60,10 +66,16 @@ class SocketService {
 
       // Setup event listeners
       this.setupEventListeners();
+      
+      // If we're on the last server and still not connecting, try local fallback
+      if (this.currentServerIndex === this.serverUrls.length - 1 && !this.localFallbackMode) {
+        this.prepareLocalFallback();
+      }
     } catch (error) {
       console.error("Error creating socket connection:", error);
       this.clearConnectionTimeout();
       this.connectionInProgress = false;
+      this.tryNextServer();
       return null;
     }
 
@@ -75,31 +87,45 @@ class SocketService {
     this.clearConnectionTimeout();
     
     if (this.socket && !this.socket.connected) {
-      console.log("Connection timed out, trying alternative server");
+      console.log(`Connection to server ${this.currentServerIndex + 1} timed out, trying next server`);
       
       // Clean up current socket
       this.socket.removeAllListeners();
       this.socket.disconnect();
       this.socket = null;
       
-      // Switch to backup server if we're on primary, or vice versa
-      this.toggleServer();
-      
-      // Attempt connection with the alternative server
-      this.connectionInProgress = false;
-      this.connect();
+      // Move to next server
+      this.tryNextServer();
     }
   }
   
-  // Toggle between primary and backup servers
-  private toggleServer() {
-    if (this.currentServerUrl === this.primaryServerUrl) {
-      console.log("Switching to backup server");
-      this.currentServerUrl = this.backupServerUrl;
-    } else {
-      console.log("Switching back to primary server");
-      this.currentServerUrl = this.primaryServerUrl;
+  // Try the next server in the list
+  private tryNextServer() {
+    this.currentServerIndex = (this.currentServerIndex + 1) % this.serverUrls.length;
+    this.connectionInProgress = false;
+    this.reconnectAttempts += 1;
+    
+    // If we've tried all servers multiple times, notify the user
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      toast.error("All connection attempts failed. The game servers might be down for maintenance. Please try again later.");
+      return;
     }
+    
+    // Try connecting to the next server
+    setTimeout(() => {
+      this.connect();
+    }, 1000);
+  }
+
+  // Prepare a local fallback mode when all remote servers fail
+  private prepareLocalFallback() {
+    if (this.localFallbackMode) return;
+    
+    console.log("All remote servers failed, preparing local fallback mode");
+    this.localFallbackMode = true;
+    
+    // Show message about offline mode
+    toast.error("Could not connect to game servers. Some features may be limited.");
   }
   
   // Clear the connection timeout
@@ -117,7 +143,8 @@ class SocketService {
       this.clearConnectionTimeout();
       this.reconnectAttempts = 0;
       this.connectionInProgress = false;
-      toast.success('Connected to game server');
+      this.localFallbackMode = false;
+      toast.success(`Connected to game server ${this.currentServerIndex + 1}`);
       console.log('Socket connected:', this.socket?.id);
       
       // Rejoin game if there was an active game
@@ -131,19 +158,21 @@ class SocketService {
 
     this.socket.on('connect_error', (error) => {
       this.clearConnectionTimeout();
-      this.reconnectAttempts++;
       console.error('Socket connection error:', error);
       
       // Only show toast for first error to avoid spam
-      if (this.reconnectAttempts === 1) {
+      if (this.reconnectAttempts === 0) {
         toast.error(`Connection error: ${error.message}. Attempting to reconnect...`);
       }
       
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      // Try next server after a few connection errors
+      if (this.reconnectAttempts >= 2) {
         this.connectionInProgress = false;
-        console.log("Maximum reconnection attempts reached, trying alternative server");
-        this.toggleServer();
-        this.forceReconnect();
+        console.log("Multiple connection errors, trying next server");
+        this.tryNextServer();
+      } else {
+        this.reconnectAttempts += 1;
+        this.connectionInProgress = false;
       }
     });
 
@@ -151,26 +180,27 @@ class SocketService {
       this.clearConnectionTimeout();
       toast.success(`Reconnected to server after ${attemptNumber} attempts`);
       this.connectionInProgress = false;
+      this.localFallbackMode = false;
     });
 
     this.socket.on('reconnect_error', (error) => {
       this.clearConnectionTimeout();
       console.error('Socket reconnection error:', error);
       this.connectionInProgress = false;
+      this.tryNextServer();
     });
 
     this.socket.on('reconnect_failed', () => {
       this.clearConnectionTimeout();
-      toast.error(`Failed to reconnect. Trying alternative approach...`);
+      toast.error(`Failed to reconnect. Trying another server...`);
       this.connectionInProgress = false;
-      // Switch servers and try again
-      this.toggleServer();
-      this.forceReconnect();
+      this.tryNextServer();
     });
 
     this.socket.on('disconnect', (reason) => {
       this.clearConnectionTimeout();
       console.log('Socket disconnected:', reason);
+      
       if (reason === 'io server disconnect') {
         toast.error('Server disconnected. Trying to reconnect...');
         this.forceReconnect();
@@ -179,6 +209,7 @@ class SocketService {
         this.forceReconnect();
       } else {
         toast.error(`Disconnected: ${reason}. Attempting to reconnect...`);
+        this.forceReconnect();
       }
       this.connectionInProgress = false;
     });
@@ -200,7 +231,6 @@ class SocketService {
     }
     
     // Reset state
-    this.reconnectAttempts = 0;
     this.connectionInProgress = false;
     this.clearConnectionTimeout();
     
@@ -225,7 +255,7 @@ class SocketService {
 
   // Manual reconnect function
   reconnect() {
-    // Clear any existing listeners to prevent duplicates
+    // Clean up existing socket if it exists
     if (this.socket) {
       this.socket.removeAllListeners();
       this.socket.disconnect();
@@ -233,13 +263,24 @@ class SocketService {
     }
     
     // Reset connection state
-    this.reconnectAttempts = 0;
     this.connectionInProgress = false;
     this.clearConnectionTimeout();
+    
+    // Reset server index to start with the primary server
+    this.currentServerIndex = 0;
     
     // Try connection
     console.log("Attempting manual reconnection");
     return this.connect() !== null;
+  }
+
+  // Reset the server connection cycle
+  resetServerCycle() {
+    this.currentServerIndex = 0;
+    this.reconnectAttempts = 0;
+    this.localFallbackMode = false;
+    this.connectionInProgress = false;
+    this.clearConnectionTimeout();
   }
 
   // Join a game room
@@ -289,6 +330,17 @@ class SocketService {
     
     socket.emit('make_guess', { gameId: this.gameId, targetPlayerId });
     return true;
+  }
+
+  // Get current server status
+  getServerStatus() {
+    return {
+      connected: this.isConnected(),
+      currentServer: this.currentServerIndex + 1,
+      totalServers: this.serverUrls.length,
+      reconnectAttempts: this.reconnectAttempts,
+      inLocalMode: this.localFallbackMode
+    };
   }
 
   // Disconnect from the server
