@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Header from '@/components/Header';
 import Lobby from '@/components/Lobby';
@@ -18,17 +18,17 @@ const Game: React.FC = () => {
   const [connectionAttempts, setConnectionAttempts] = useState(0);
   
   // Function to check connection and update state
-  const checkConnection = () => {
+  const checkConnection = useCallback(() => {
     const isConnected = socketService.isConnected();
     setConnectionError(!isConnected);
     if (isConnected && reconnecting) {
       setReconnecting(false);
     }
     return isConnected;
-  };
+  }, [reconnecting]);
   
   // Handle manual reconnection
-  const handleReconnect = () => {
+  const handleReconnect = useCallback(() => {
     setReconnecting(true);
     setConnectionAttempts(prev => prev + 1);
     
@@ -43,14 +43,14 @@ const Game: React.FC = () => {
     } else {
       setReconnecting(false);
     }
-  };
+  }, [checkConnection]);
   
   // Check for gameId in URL parameters and handle connection
   useEffect(() => {
     const gameId = searchParams.get('id');
     
     // If there's a gameId in the URL and user is not already in a game,
-    // show a prompt to enter name and join
+    // attempt to join with stored name or wait for name input
     if (gameId && !playerName) {
       const name = localStorage.getItem('playerName');
       if (name) {
@@ -82,7 +82,7 @@ const Game: React.FC = () => {
     return () => {
       clearInterval(interval);
     };
-  }, [searchParams, joinGame, playerName]);
+  }, [searchParams, joinGame, playerName, checkConnection]);
 
   return (
     <div className="min-h-screen bg-gradient-radial from-blue-50 to-white pt-20 pb-10">

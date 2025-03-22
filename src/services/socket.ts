@@ -9,9 +9,12 @@ class SocketService {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectInterval: number = 3000; // 3 seconds
-  // Use polling only to avoid websocket issues
-  private serverUrl: string = 'https://raja-mantri-server.onrender.com';
+  // Fallback server URL when main server is down or slow to respond
+  private backupServerUrl: string = 'https://raja-mantri-backup.onrender.com';
+  private primaryServerUrl: string = 'https://raja-mantri-server.onrender.com';
+  private currentServerUrl: string = this.primaryServerUrl;
   private connectionInProgress: boolean = false;
+  private connectionTimeout: NodeJS.Timeout | null = null;
 
   // Initialize connection to WebSocket server
   connect() {
@@ -35,17 +38,23 @@ class SocketService {
       this.socket = null;
     }
 
-    console.log("Connecting to socket server:", this.serverUrl);
+    console.log("Connecting to socket server:", this.currentServerUrl);
 
     try {
+      // Set a timeout to detect stalled connection attempts
+      this.connectionTimeout = setTimeout(() => {
+        console.log("Connection attempt timed out, trying alternative method");
+        this.handleConnectionTimeout();
+      }, 10000);
+
       // Use polling only initially to ensure most reliable connection
-      this.socket = io(this.serverUrl, {
+      this.socket = io(this.currentServerUrl, {
         transports: ['polling'], // Start with polling only for reliability
         autoConnect: true,
         reconnection: true,
         reconnectionAttempts: this.maxReconnectAttempts,
         reconnectionDelay: this.reconnectInterval,
-        timeout: 60000, // 60 seconds timeout (increased)
+        timeout: 60000, // 60 seconds timeout
         forceNew: true, // Create a new connection each time
       });
 
@@ -53,6 +62,7 @@ class SocketService {
       this.setupEventListeners();
     } catch (error) {
       console.error("Error creating socket connection:", error);
+      this.clearConnectionTimeout();
       this.connectionInProgress = false;
       return null;
     }
@@ -60,10 +70,51 @@ class SocketService {
     return this.socket;
   }
 
+  // Handle connection timeout - try switching servers
+  private handleConnectionTimeout() {
+    this.clearConnectionTimeout();
+    
+    if (this.socket && !this.socket.connected) {
+      console.log("Connection timed out, trying alternative server");
+      
+      // Clean up current socket
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+      this.socket = null;
+      
+      // Switch to backup server if we're on primary, or vice versa
+      this.toggleServer();
+      
+      // Attempt connection with the alternative server
+      this.connectionInProgress = false;
+      this.connect();
+    }
+  }
+  
+  // Toggle between primary and backup servers
+  private toggleServer() {
+    if (this.currentServerUrl === this.primaryServerUrl) {
+      console.log("Switching to backup server");
+      this.currentServerUrl = this.backupServerUrl;
+    } else {
+      console.log("Switching back to primary server");
+      this.currentServerUrl = this.primaryServerUrl;
+    }
+  }
+  
+  // Clear the connection timeout
+  private clearConnectionTimeout() {
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+    }
+  }
+
   private setupEventListeners() {
     if (!this.socket) return;
 
     this.socket.on('connect', () => {
+      this.clearConnectionTimeout();
       this.reconnectAttempts = 0;
       this.connectionInProgress = false;
       toast.success('Connected to game server');
@@ -79,6 +130,7 @@ class SocketService {
     });
 
     this.socket.on('connect_error', (error) => {
+      this.clearConnectionTimeout();
       this.reconnectAttempts++;
       console.error('Socket connection error:', error);
       
@@ -89,39 +141,41 @@ class SocketService {
       
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         this.connectionInProgress = false;
-        // Reset connection and try again
-        if (this.socket) {
-          console.log("Maximum reconnection attempts reached, forcing new connection");
-          // Force a clean reconnection
-          this.forceReconnect();
-        }
+        console.log("Maximum reconnection attempts reached, trying alternative server");
+        this.toggleServer();
+        this.forceReconnect();
       }
     });
 
     this.socket.on('reconnect', (attemptNumber) => {
+      this.clearConnectionTimeout();
       toast.success(`Reconnected to server after ${attemptNumber} attempts`);
       this.connectionInProgress = false;
     });
 
     this.socket.on('reconnect_error', (error) => {
+      this.clearConnectionTimeout();
       console.error('Socket reconnection error:', error);
       this.connectionInProgress = false;
     });
 
     this.socket.on('reconnect_failed', () => {
-      toast.error(`Failed to reconnect after ${this.maxReconnectAttempts} attempts. Please reload the page.`);
+      this.clearConnectionTimeout();
+      toast.error(`Failed to reconnect. Trying alternative approach...`);
       this.connectionInProgress = false;
-      // Try one more time with a clean connection
+      // Switch servers and try again
+      this.toggleServer();
       this.forceReconnect();
     });
 
     this.socket.on('disconnect', (reason) => {
+      this.clearConnectionTimeout();
       console.log('Socket disconnected:', reason);
       if (reason === 'io server disconnect') {
-        toast.error('Server disconnected. Please reload the page.');
+        toast.error('Server disconnected. Trying to reconnect...');
+        this.forceReconnect();
       } else if (reason === 'transport close') {
         toast.error('Connection lost. Attempting to reconnect...');
-        // Force a clean connection
         this.forceReconnect();
       } else {
         toast.error(`Disconnected: ${reason}. Attempting to reconnect...`);
@@ -130,6 +184,7 @@ class SocketService {
     });
 
     this.socket.on('error', (error) => {
+      this.clearConnectionTimeout();
       console.error('Socket error:', error);
       this.connectionInProgress = false;
     });
@@ -147,6 +202,7 @@ class SocketService {
     // Reset state
     this.reconnectAttempts = 0;
     this.connectionInProgress = false;
+    this.clearConnectionTimeout();
     
     // Wait a bit before reconnecting
     setTimeout(() => {
@@ -179,6 +235,7 @@ class SocketService {
     // Reset connection state
     this.reconnectAttempts = 0;
     this.connectionInProgress = false;
+    this.clearConnectionTimeout();
     
     // Try connection
     console.log("Attempting manual reconnection");
@@ -236,6 +293,7 @@ class SocketService {
 
   // Disconnect from the server
   disconnect() {
+    this.clearConnectionTimeout();
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;

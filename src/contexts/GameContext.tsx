@@ -62,12 +62,25 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [playerName, setPlayerName] = useState('');
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
   const [gameId, setGameId] = useState<string | null>(null);
+  const [socketInitialized, setSocketInitialized] = useState(false);
 
   // Initialize socket connection
   useEffect(() => {
+    // Avoid re-initializing socket if it's already set up
+    if (socketInitialized) return;
+    
     const socket = socketService.connect();
     
-    if (!socket) return;
+    if (!socket) {
+      // If initial connection fails, schedule retry
+      const retryTimer = setTimeout(() => {
+        socketService.reconnect();
+      }, 3000);
+      
+      return () => clearTimeout(retryTimer);
+    }
+    
+    setSocketInitialized(true);
     
     // Listen for game state updates
     socket.on('game_state', (data) => {
@@ -117,26 +130,34 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     
     return () => {
-      socketService.disconnect();
+      // Don't disconnect on unmount if we're still in a game
+      if (!gameId) {
+        socketService.disconnect();
+      }
     };
-  }, [playerName]);
+  }, [socketInitialized, playerName, gameId]);
 
   // Join game function
   const joinGame = (name: string, gameIdToJoin?: string) => {
     setPlayerName(name);
+    localStorage.setItem('playerName', name);
     
     if (gameIdToJoin) {
       // Join an existing game
-      socketService.joinGame(gameIdToJoin, name);
-      setGameId(gameIdToJoin);
+      const joined = socketService.joinGame(gameIdToJoin, name);
+      if (joined) {
+        setGameId(gameIdToJoin);
+      }
     } else {
       // Create a new game
-      socketService.createGame(name);
-      const mockPlayers = generateMockPlayers();
-      mockPlayers[0].name = name;
-      setPlayers(mockPlayers);
-      setCurrentPlayer(mockPlayers[0]);
-      toast.success(`Welcome to the game, ${name}!`);
+      const created = socketService.createGame(name);
+      if (created) {
+        const mockPlayers = generateMockPlayers();
+        mockPlayers[0].name = name;
+        setPlayers(mockPlayers);
+        setCurrentPlayer(mockPlayers[0]);
+        toast.success(`Welcome to the game, ${name}!`);
+      }
     }
   };
 
