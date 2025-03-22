@@ -9,6 +9,7 @@ class SocketService {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectInterval: number = 3000; // 3 seconds
+  // Use polling only to avoid websocket issues
   private serverUrl: string = 'https://raja-mantri-server.onrender.com';
   private connectionInProgress: boolean = false;
 
@@ -36,15 +37,15 @@ class SocketService {
 
     console.log("Connecting to socket server:", this.serverUrl);
 
-    // Connect to the WebSocket server with fallback to HTTP polling
     try {
+      // Use polling only initially to ensure most reliable connection
       this.socket = io(this.serverUrl, {
-        transports: ['polling', 'websocket'], // Fixed: TypeScript expects an array of predefined transport types
+        transports: ['polling'], // Start with polling only for reliability
         autoConnect: true,
         reconnection: true,
         reconnectionAttempts: this.maxReconnectAttempts,
         reconnectionDelay: this.reconnectInterval,
-        timeout: 30000, // 30 seconds timeout (increased from 20s)
+        timeout: 60000, // 60 seconds timeout (increased)
         forceNew: true, // Create a new connection each time
       });
 
@@ -88,10 +89,11 @@ class SocketService {
       
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         this.connectionInProgress = false;
-        // Try again with different transport
+        // Reset connection and try again
         if (this.socket) {
-          console.log("Switching to polling transport after failed attempts");
-          this.switchToPolling();
+          console.log("Maximum reconnection attempts reached, forcing new connection");
+          // Force a clean reconnection
+          this.forceReconnect();
         }
       }
     });
@@ -109,6 +111,8 @@ class SocketService {
     this.socket.on('reconnect_failed', () => {
       toast.error(`Failed to reconnect after ${this.maxReconnectAttempts} attempts. Please reload the page.`);
       this.connectionInProgress = false;
+      // Try one more time with a clean connection
+      this.forceReconnect();
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -117,8 +121,8 @@ class SocketService {
         toast.error('Server disconnected. Please reload the page.');
       } else if (reason === 'transport close') {
         toast.error('Connection lost. Attempting to reconnect...');
-        // Try to reconnect with polling if websocket fails
-        this.switchToPolling();
+        // Force a clean connection
+        this.forceReconnect();
       } else {
         toast.error(`Disconnected: ${reason}. Attempting to reconnect...`);
       }
@@ -131,20 +135,23 @@ class SocketService {
     });
   }
 
-  // Switch to polling transport if websocket fails
-  private switchToPolling() {
+  // Force a clean reconnection
+  private forceReconnect() {
+    // Make sure we clean up first
     if (this.socket) {
-      console.log("Switching to polling transport");
-      // Disconnect first
+      this.socket.removeAllListeners();
       this.socket.disconnect();
-      // Change transport preference
-      if (this.socket.io && this.socket.io.opts) {
-        // Fixed: Properly type the transports array
-        this.socket.io.opts.transports = ['polling'];
-      }
-      // Try to reconnect
-      this.socket.connect();
+      this.socket = null;
     }
+    
+    // Reset state
+    this.reconnectAttempts = 0;
+    this.connectionInProgress = false;
+    
+    // Wait a bit before reconnecting
+    setTimeout(() => {
+      this.connect();
+    }, 1000);
   }
 
   // Get the socket instance
@@ -173,7 +180,7 @@ class SocketService {
     this.reconnectAttempts = 0;
     this.connectionInProgress = false;
     
-    // Try connection with polling first
+    // Try connection
     console.log("Attempting manual reconnection");
     return this.connect() !== null;
   }

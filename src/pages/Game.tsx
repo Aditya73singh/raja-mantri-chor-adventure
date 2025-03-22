@@ -45,7 +45,7 @@ const Game: React.FC = () => {
     }
   };
   
-  // Check for gameId in URL parameters
+  // Check for gameId in URL parameters and handle connection
   useEffect(() => {
     const gameId = searchParams.get('id');
     
@@ -61,13 +61,23 @@ const Game: React.FC = () => {
     // Initial connection check
     checkConnection();
     
-    // Set up connection checking interval
-    const interval = setInterval(checkConnection, 5000);
-    
-    // Initial connection attempt
+    // Initial connection attempt if needed
     if (!socketService.isConnected()) {
-      handleReconnect();
+      setReconnecting(true);
+      if (socketService.reconnect()) {
+        setTimeout(() => {
+          const connected = checkConnection();
+          setReconnecting(!connected);
+        }, 5000);
+      } else {
+        setReconnecting(false);
+      }
     }
+    
+    // Set up connection checking interval
+    const interval = setInterval(() => {
+      checkConnection();
+    }, 5000);
     
     return () => {
       clearInterval(interval);
