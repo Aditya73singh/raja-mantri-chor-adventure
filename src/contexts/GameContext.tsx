@@ -25,6 +25,7 @@ interface GameContextType {
   gameEnded: boolean;
   playerName: string;
   gameId: string | null;
+  isOfflineMode: boolean;
   setPlayerName: (name: string) => void;
   joinGame: (name: string, gameId?: string) => void;
   startGame: () => void;
@@ -32,6 +33,7 @@ interface GameContextType {
   makeGuess: (targetPlayerId: string) => void;
   resetGame: () => void;
   reconnectToGame: () => void;
+  startOfflineMode: () => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -40,10 +42,22 @@ const GameContext = createContext<GameContextType | undefined>(undefined);
 const generateMockPlayers = (): Player[] => {
   return [
     { id: '1', name: 'You', score: 0, isRevealed: false },
-    { id: '2', name: 'Player 2', score: 0, isRevealed: false },
-    { id: '3', name: 'Player 3', score: 0, isRevealed: false },
-    { id: '4', name: 'Player 4', score: 0, isRevealed: false },
+    { id: '2', name: 'AI Player 1', score: 0, isRevealed: false },
+    { id: '3', name: 'AI Player 2', score: 0, isRevealed: false },
+    { id: '4', name: 'AI Player 3', score: 0, isRevealed: false },
   ];
+};
+
+// Generate random roles for offline mode
+const offlineRoles: RoleType[] = ['Raja', 'Mantri', 'Chor', 'Sipahi'];
+
+const shuffleArray = <T,>(array: T[]): T[] => {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
 };
 
 // Role points
@@ -65,6 +79,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [gameId, setGameId] = useState<string | null>(null);
   const [socketInitialized, setSocketInitialized] = useState(false);
   const [connectionRetries, setConnectionRetries] = useState(0);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   // Initialize player name from localStorage
   useEffect(() => {
@@ -82,6 +97,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Initialize socket connection
   useEffect(() => {
+    // Don't try to connect if we're in offline mode
+    if (isOfflineMode) return;
+    
     // Avoid re-initializing socket if it's already set up
     if (socketInitialized) return;
     
@@ -155,10 +173,57 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         socketService.disconnect();
       }
     };
-  }, [socketInitialized, playerName, gameId, connectionRetries]);
+  }, [socketInitialized, playerName, gameId, connectionRetries, isOfflineMode]);
+
+  // Start offline mode
+  const startOfflineMode = () => {
+    // Disconnect from any active socket connection
+    socketService.disconnect();
+    setSocketInitialized(false);
+    
+    // Create offline game state
+    const offlinePlayers = generateMockPlayers();
+    if (playerName) {
+      offlinePlayers[0].name = playerName;
+    }
+    
+    setPlayers(offlinePlayers);
+    setCurrentPlayer(offlinePlayers[0]);
+    setIsOfflineMode(true);
+    setGameId('offline-game');
+    
+    toast.success("Offline mode started. You can play against AI players.");
+  };
+
+  // Offline mode game mechanics
+  useEffect(() => {
+    if (!isOfflineMode || !gameStarted) return;
+    
+    // In offline mode, automatically distribute roles when game starts
+    if (gameStarted && players.every(p => !p.currentRole)) {
+      const shuffledRoles = shuffleArray([...offlineRoles]);
+      const updatedPlayers = players.map((player, index) => ({
+        ...player,
+        currentRole: shuffledRoles[index],
+      }));
+      
+      setPlayers(updatedPlayers);
+      
+      // Update current player's role
+      const newCurrentPlayer = updatedPlayers.find(p => p.name === playerName) || null;
+      setCurrentPlayer(newCurrentPlayer);
+      
+      toast.success("Roles have been distributed!");
+    }
+  }, [isOfflineMode, gameStarted, players, playerName]);
 
   // Reconnect to game if we have the necessary information
   const reconnectToGame = () => {
+    // Don't try to reconnect if we're in offline mode
+    if (isOfflineMode) {
+      return false;
+    }
+    
     if (gameId && playerName) {
       socketService.joinGame(gameId, playerName);
       return true;
@@ -170,6 +235,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const joinGame = (name: string, gameIdToJoin?: string) => {
     setPlayerName(name);
     localStorage.setItem('playerName', name);
+    
+    if (isOfflineMode) {
+      // Join an offline game
+      const mockPlayers = generateMockPlayers();
+      mockPlayers[0].name = name;
+      setPlayers(mockPlayers);
+      setCurrentPlayer(mockPlayers[0]);
+      toast.success(`Welcome to the offline game, ${name}!`);
+      return;
+    }
     
     if (gameIdToJoin) {
       // Join an existing game
@@ -198,17 +273,94 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     
+    if (isOfflineMode) {
+      // Start offline game
+      setGameStarted(true);
+      toast.success("Game started in offline mode!");
+      return;
+    }
+    
     socketService.startGame();
   };
 
-  // Distribute roles among players (now handled by server)
+  // Distribute roles among players (now handled by server or offline logic)
   const distributeRoles = () => {
-    // This is now handled by the server
+    // This is now handled by the server or offline logic
     // Kept for compatibility with existing code
   };
 
   // Make a guess (Sipahi guessing who is Chor)
   const makeGuess = (targetPlayerId: string) => {
+    if (isOfflineMode) {
+      // Handle guessing in offline mode
+      const targetPlayer = players.find(p => p.id === targetPlayerId);
+      const sipahiPlayer = players.find(p => p.currentRole === 'Sipahi');
+      const chorPlayer = players.find(p => p.currentRole === 'Chor');
+      
+      if (!targetPlayer || !sipahiPlayer || !chorPlayer) {
+        toast.error("Cannot make guess: roles not properly distributed");
+        return;
+      }
+      
+      const isCorrectGuess = targetPlayer.id === chorPlayer.id;
+      
+      // Reveal all players
+      const updatedPlayers = players.map(p => ({
+        ...p,
+        isRevealed: true,
+        // Update scores based on guess result
+        score: p.score + (
+          isCorrectGuess && p.id === sipahiPlayer.id ? rolePoints['Sipahi'] :
+          !isCorrectGuess && p.id === chorPlayer.id ? rolePoints['Sipahi'] :
+          p.currentRole ? rolePoints[p.currentRole] : 0
+        )
+      }));
+      
+      setPlayers(updatedPlayers);
+      
+      // Show guess result toast
+      if (isCorrectGuess) {
+        toast.success(`Correct! ${sipahiPlayer.name} identified ${chorPlayer.name} as the Chor!`);
+      } else {
+        toast.error(`Wrong guess! ${chorPlayer.name} was the Chor and gets the Sipahi's points!`);
+      }
+      
+      // Set timeout to end the round
+      setTimeout(() => {
+        if (currentRound < totalRounds) {
+          // Start next round
+          const nextRound = currentRound + 1;
+          setCurrentRound(nextRound);
+          
+          // Reset player revelations and distribute new roles
+          const shuffledRoles = shuffleArray([...offlineRoles]);
+          const newRoundPlayers = players.map((player, index) => ({
+            ...player,
+            currentRole: shuffledRoles[index],
+            isRevealed: false
+          }));
+          
+          setPlayers(newRoundPlayers);
+          
+          // Update current player
+          const newCurrentPlayer = newRoundPlayers.find(p => p.name === playerName) || null;
+          setCurrentPlayer(newCurrentPlayer);
+          
+          toast.success(`Round ${nextRound} started!`);
+        } else {
+          // End game
+          setGameEnded(true);
+          
+          // Find winner
+          const winner = [...updatedPlayers].sort((a, b) => b.score - a.score)[0];
+          toast.success(`Game over! ${winner.name} wins with ${winner.score} points!`);
+        }
+      }, 3000);
+      
+      return;
+    }
+    
+    // Online mode - server handles the guess
     socketService.makeGuess(targetPlayerId);
   };
 
@@ -219,6 +371,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setGameStarted(false);
     setGameEnded(false);
     setGameId(null);
+    setIsOfflineMode(false);
     localStorage.removeItem('gameId');
     toast.success("Game has been reset.");
   };
@@ -234,13 +387,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         gameEnded,
         playerName,
         gameId,
+        isOfflineMode,
         setPlayerName,
         joinGame,
         startGame,
         distributeRoles,
         makeGuess,
         resetGame,
-        reconnectToGame
+        reconnectToGame,
+        startOfflineMode
       }}
     >
       {children}

@@ -8,13 +8,24 @@ import { useGame } from '@/contexts/GameContext';
 import { socketService } from '@/services/socket';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, WifiOff, Wifi, Server } from 'lucide-react';
+import { RefreshCw, WifiOff, Wifi, Server, DatabaseIcon } from 'lucide-react';
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const Game: React.FC = () => {
-  const { gameStarted, joinGame, playerName } = useGame();
+  const { gameStarted, joinGame, playerName, startOfflineMode } = useGame();
   const [searchParams] = useSearchParams();
   const [connectionError, setConnectionError] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [showOfflineDialog, setShowOfflineDialog] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState({
     connected: false,
     currentServer: 1,
@@ -31,6 +42,11 @@ const Game: React.FC = () => {
     setConnectionError(!isConnected);
     setConnectionStatus(status);
     
+    // Show offline mode dialog if we've tried all servers multiple times
+    if (!isConnected && status.reconnectAttempts >= 8) {
+      setShowOfflineDialog(true);
+    }
+    
     if (isConnected && reconnecting) {
       setReconnecting(false);
     }
@@ -40,6 +56,7 @@ const Game: React.FC = () => {
   // Handle manual reconnection
   const handleReconnect = useCallback(() => {
     setReconnecting(true);
+    setShowOfflineDialog(false);
     
     // Reset server cycle to start fresh
     socketService.resetServerCycle();
@@ -56,6 +73,12 @@ const Game: React.FC = () => {
       setReconnecting(false);
     }
   }, [checkConnection]);
+
+  // Handle switching to offline mode
+  const handleOfflineMode = useCallback(() => {
+    setShowOfflineDialog(false);
+    startOfflineMode();
+  }, [startOfflineMode]);
   
   // Check for gameId in URL parameters and handle connection
   useEffect(() => {
@@ -125,6 +148,15 @@ const Game: React.FC = () => {
                 <RefreshCw className={`mr-2 h-4 w-4 ${reconnecting ? 'animate-spin' : ''}`} />
                 {reconnecting ? 'Reconnecting...' : 'Reconnect'}
               </Button>
+              
+              <Button
+                variant="outline"
+                onClick={() => setShowOfflineDialog(true)}
+                className="bg-white hover:bg-gray-100"
+              >
+                <DatabaseIcon className="mr-2 h-4 w-4" />
+                Offline Mode
+              </Button>
             </div>
           </Alert>
         </div>
@@ -138,6 +170,53 @@ const Game: React.FC = () => {
           </div>
         </div>
       )}
+      
+      {connectionStatus.inLocalMode && (
+        <div className="max-w-md mx-auto mt-4 mb-4">
+          <Alert className="bg-blue-100 border-blue-300">
+            <DatabaseIcon className="h-5 w-5 mb-2" />
+            <AlertTitle>Offline Mode Active</AlertTitle>
+            <AlertDescription>
+              You are currently playing in offline mode with limited functionality.
+              <div className="mt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={handleReconnect}
+                  className="bg-white hover:bg-gray-100"
+                  size="sm"
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Try connecting to server
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
+      
+      {/* Offline mode confirmation dialog */}
+      <AlertDialog open={showOfflineDialog} onOpenChange={setShowOfflineDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch to Offline Mode?</AlertDialogTitle>
+            <AlertDialogDescription>
+              All connection attempts to the game servers have failed. Would you like to play in offline mode?
+              <p className="mt-2 text-amber-600">Note: In offline mode, you can play locally but cannot connect with other players.</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowOfflineDialog(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleOfflineMode} className="bg-blue-600 hover:bg-blue-700">
+              <DatabaseIcon className="mr-2 h-4 w-4" />
+              Start Offline Mode
+            </AlertDialogAction>
+            <AlertDialogAction onClick={handleReconnect} className="bg-green-600 hover:bg-green-700">
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Try Again
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       
       {gameStarted ? <GameBoard /> : <Lobby />}
     </div>
